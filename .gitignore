@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.db
+*.sqlite3
+.env
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+
+# Evaluator-only documents (NOT for candidates)
+RUBRIC.md
+EVALUATOR_*.md
+*_EVALUATOR.md
+SCORECARD.md
+.claude
