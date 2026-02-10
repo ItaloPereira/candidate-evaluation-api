@@ -64,6 +64,17 @@ You **MUST** implement these features (see **REQUIREMENTS.md** for full specs):
 
 ---
 
+## Rules
+
+1. **Commit each feature separately** with descriptive messages
+2. **Think out loud** while working (your screen is being recorded)
+3. **AI tools are allowed** - but you must be able to explain every line of your code
+4. **Work inside `app/`** - the project structure is already set up for you
+5. **Tests are optional but valued** - the test infrastructure is ready in `tests/`
+6. **Don't change the infrastructure** - no need to modify `database.py`, `config.py`, or `conftest.py`. You **will** need to modify `main.py` to register your routers and models (see the comments there).
+
+---
+
 ## Getting Started
 
 ### Setup (During Briefing Phase)
