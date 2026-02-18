@@ -1,14 +1,19 @@
 import math
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.candidate import Candidate
-from app.models.evaluation import Evaluation
-from app.schemas.candidate import CandidateCreate, CandidateResponse, CandidateUpdate
-from app.models.evaluation import EvaluationCategory
+from app.models.candidate import Candidate, CandidateStatus
+from app.models.evaluation import Evaluation, EvaluationCategory
+from app.schemas.candidate import (
+    CandidateCreate,
+    CandidateListItem,
+    CandidateListResponse,
+    CandidateResponse,
+    CandidateUpdate,
+)
 from app.schemas.evaluation import (
     CategoryScore,
     Decision,
@@ -41,9 +46,83 @@ def create_candidate(candidate_in: CandidateCreate, db: Session = Depends(get_db
     return candidate
 
 
-@router.get("", response_model=list[CandidateResponse])
-def list_candidates(db: Session = Depends(get_db)):
-    return db.query(Candidate).all()
+@router.get("", response_model=CandidateListResponse)
+def list_candidates(
+    status: CandidateStatus | None = None,
+    min_score: float | None = Query(default=None, ge=0, le=5),
+    max_score: float | None = Query(default=None, ge=0, le=5),
+    sort_by: str = Query(default="created_at", pattern="^(created_at|final_score|last_name)$"),
+    sort_order: str = Query(default="desc", pattern="^(asc|desc)$"),
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=20, ge=1),
+    db: Session = Depends(get_db),
+):
+    per_page = min(per_page, 100)
+
+    query = db.query(Candidate)
+    if status is not None:
+        query = query.filter(Candidate.status == status)
+
+    candidates = query.all()
+
+    all_evaluations = db.query(Evaluation).all()
+    evals_by_candidate: dict[int, list[Evaluation]] = {}
+    for e in all_evaluations:
+        evals_by_candidate.setdefault(e.candidate_id, []).append(e)
+
+    results: list[tuple[Candidate, float | None]] = []
+    for candidate in candidates:
+        candidate_evals = evals_by_candidate.get(candidate.id, [])
+        final_score = calculate_final_score(candidate_evals)
+
+        if min_score is not None or max_score is not None:
+            if final_score is None:
+                continue
+            if min_score is not None and final_score < min_score:
+                continue
+            if max_score is not None and final_score > max_score:
+                continue
+
+        results.append((candidate, final_score))
+
+    reverse = sort_order == "desc"
+    if sort_by == "final_score":
+        results.sort(
+            key=lambda x: (x[1] is None, x[1] if x[1] is not None else 0),
+            reverse=reverse,
+        )
+    elif sort_by == "last_name":
+        results.sort(key=lambda x: x[0].last_name.lower(), reverse=reverse)
+    else:
+        results.sort(key=lambda x: x[0].created_at, reverse=reverse)
+
+    total = len(results)
+    total_pages = math.ceil(total / per_page) if total > 0 else 0
+
+    start = (page - 1) * per_page
+    end = start + per_page
+    page_results = results[start:end]
+
+    items = [
+        CandidateListItem(
+            id=candidate.id,
+            email=candidate.email,
+            first_name=candidate.first_name,
+            last_name=candidate.last_name,
+            status=candidate.status,
+            final_score=final_score,
+            created_at=candidate.created_at,
+        )
+        for candidate, final_score in page_results
+    ]
+
+    return CandidateListResponse(
+        items=items,
+        total=total,
+        page=page,
+        per_page=per_page,
+        total_pages=total_pages,
+    )
 
 
 @router.get("/{candidate_id}", response_model=CandidateResponse)
@@ -138,6 +217,30 @@ CATEGORY_WEIGHTS: dict[EvaluationCategory, float] = {
 }
 
 TOTAL_CATEGORIES = len(CATEGORY_WEIGHTS)
+
+
+def calculate_final_score(evaluations: list[Evaluation]) -> float | None:
+    """
+    Calculate the weighted final score from a list of evaluations.
+
+    Returns None if fewer than 4 categories are evaluated (incomplete evaluation).
+    Returns the weighted sum rounded to 2 decimals if all 4 categories are present.
+    """
+    if len(evaluations) < TOTAL_CATEGORIES:
+        return None
+
+    eval_by_category = {e.category: e.score for e in evaluations}
+
+    if len(eval_by_category) < TOTAL_CATEGORIES:
+        return None
+
+    weighted_sum = 0.0
+    for category, weight in CATEGORY_WEIGHTS.items():
+        score = eval_by_category.get(category)
+        if score is not None:
+            weighted_sum += math.ceil(score * weight * 100) / 100
+
+    return round(weighted_sum, 2)
 
 
 @router.get("/{candidate_id}/final-score", response_model=FinalScoreResponse)

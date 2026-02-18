@@ -29,3 +29,21 @@ class CandidateResponse(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class CandidateListItem(BaseModel):
+    id: int
+    email: str
+    first_name: str
+    last_name: str
+    status: CandidateStatus
+    final_score: float | None
+    created_at: datetime
+
+
+class CandidateListResponse(BaseModel):
+    items: list[CandidateListItem]
+    total: int
+    page: int
+    per_page: int
+    total_pages: int
