@@ -1,3 +1,5 @@
+import math
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -6,7 +8,14 @@ from app.database import get_db
 from app.models.candidate import Candidate
 from app.models.evaluation import Evaluation
 from app.schemas.candidate import CandidateCreate, CandidateResponse, CandidateUpdate
-from app.schemas.evaluation import EvaluationCreate, EvaluationResponse
+from app.models.evaluation import EvaluationCategory
+from app.schemas.evaluation import (
+    CategoryScore,
+    Decision,
+    EvaluationCreate,
+    EvaluationResponse,
+    FinalScoreResponse,
+)
 
 router = APIRouter(prefix="/candidates", tags=["Candidates"])
 
@@ -119,3 +128,83 @@ def list_evaluations(candidate_id: int, db: Session = Depends(get_db)):
         )
 
     return db.query(Evaluation).filter(Evaluation.candidate_id == candidate_id).all()
+
+
+CATEGORY_WEIGHTS: dict[EvaluationCategory, float] = {
+    EvaluationCategory.functionality: 0.40,
+    EvaluationCategory.code_quality: 0.25,
+    EvaluationCategory.problem_solving: 0.20,
+    EvaluationCategory.communication: 0.15,
+}
+
+TOTAL_CATEGORIES = len(CATEGORY_WEIGHTS)
+
+
+@router.get("/{candidate_id}/final-score", response_model=FinalScoreResponse)
+def get_final_score(candidate_id: int, db: Session = Depends(get_db)):
+    candidate = db.query(Candidate).filter(Candidate.id == candidate_id).first()
+    if candidate is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Candidate not found",
+        )
+
+    evaluations = (
+        db.query(Evaluation).filter(Evaluation.candidate_id == candidate_id).all()
+    )
+
+    if not evaluations:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No evaluations exist for this candidate",
+        )
+
+    eval_by_category = {e.category: e.score for e in evaluations}
+
+    categories: dict[str, CategoryScore] = {}
+    weighted_sum = 0.0
+
+    for category, weight in CATEGORY_WEIGHTS.items():
+        score = eval_by_category.get(category)
+        if score is not None:
+            weighted = math.ceil(score * weight * 100) / 100
+            weighted_sum += weighted
+        else:
+            weighted = None
+        categories[category.value] = CategoryScore(
+            score=score, weight=weight, weighted=weighted
+        )
+
+    evaluated_count = len(eval_by_category)
+    candidate_name = f"{candidate.first_name} {candidate.last_name}"
+
+    if evaluated_count == TOTAL_CATEGORIES:
+        final_score = round(weighted_sum, 2)
+        if final_score >= 4.0:
+            decision = Decision.hire
+        elif final_score >= 3.0:
+            decision = Decision.needs_calibration
+        else:
+            decision = Decision.no_hire
+        return FinalScoreResponse(
+            candidate_id=candidate_id,
+            candidate_name=candidate_name,
+            final_score=final_score,
+            partial_score=None,
+            decision=decision,
+            categories=categories,
+            evaluated_categories=evaluated_count,
+            total_categories=TOTAL_CATEGORIES,
+        )
+    else:
+        partial_score = round(weighted_sum, 2)
+        return FinalScoreResponse(
+            candidate_id=candidate_id,
+            candidate_name=candidate_name,
+            final_score=None,
+            partial_score=partial_score,
+            decision=None,
+            categories=categories,
+            evaluated_categories=evaluated_count,
+            total_categories=TOTAL_CATEGORIES,
+        )
