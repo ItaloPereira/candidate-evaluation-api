@@ -3,13 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.database import Base, engine
-from app.routers import health
-
-# Register your routers here:
-# from app.routers import your_router
-
-# Import your models here so Base.metadata.create_all() picks them up:
-# from app.models import YourModel  # noqa: F401
+from app.routers import candidates, health
 
 
 @asynccontextmanager
@@ -26,4 +20,4 @@ app = FastAPI(
 )
 
 app.include_router(health.router)
-# app.include_router(your_router.router)
+app.include_router(candidates.router)
